@@ -4,6 +4,7 @@ import pytest
 from rich.console import Console
 
 from ratewatch.model import AccountState, Snapshot, Window
+from ratewatch.theme import PALETTES, set_theme
 from ratewatch.views import VIEWS, bar
 
 NOW = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
@@ -34,9 +35,11 @@ def text_of(renderable, width=100):
     return c.export_text()
 
 
+@pytest.mark.parametrize("theme", list(PALETTES))
 @pytest.mark.parametrize("view", list(VIEWS))
 @pytest.mark.parametrize("width", [60, 100, 160])
-def test_every_view_renders_all_accounts_without_overflow(view, width):
+def test_every_view_renders_all_accounts_without_overflow(view, width, theme):
+    set_theme(theme)
     _, render = VIEWS[view]
     out = text_of(render(states(), NOW, width, span_index=1), width)
     for name in ["claude-flt", "claude-private", "codex", "cursor", "never"]:
@@ -60,3 +63,25 @@ def test_passed_reset_counts_as_empty():
 def test_bar_width_is_exact():
     for pct in [0, 7, 33.9, 79, 100, None]:
         assert bar(pct, 10).cell_len == 10
+
+
+@pytest.mark.parametrize("view", ["timeline", "mini", "gantt", "split"])
+@pytest.mark.parametrize("span_index", [0, 1, 2])
+def test_axis_views_render_every_span(view, span_index):
+    out = text_of(VIEWS[view][1](states(), NOW, 120, span_index=span_index), 120)
+    assert "今" in out
+    assert max(len(line) for line in out.splitlines()) <= 120
+
+
+def test_gantt_draws_exhausted_window_as_thick_line():
+    out = text_of(VIEWS["gantt"][1](states(), NOW, 120, span_index=2), 120)
+    credit = next(line for line in out.splitlines() if "積" in line)
+    assert "━" in credit
+
+
+def test_split_initials_are_unique():
+    from ratewatch.views import _initials
+
+    ini = _initials(states())
+    assert len(set(ini.values())) == len(ini)
+    assert ini["claude-private"] == "P"

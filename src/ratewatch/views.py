@@ -17,6 +17,7 @@ from rich.text import Text
 
 from .collect import fmt_ago, fmt_duration
 from .model import AccountState, Window
+from .theme import C, pct_color
 
 # ---- 共通の部品 ----
 
@@ -35,9 +36,7 @@ def short(label: str, width: int = 0) -> str:
 
 
 def pct_style(pct: float | None) -> str:
-    if pct is None:
-        return "dim"
-    return "red" if pct >= 90 else "yellow" if pct >= 70 else "green"
+    return pct_color(pct)
 
 
 def is_passed(w: Window, now: datetime) -> bool:
@@ -53,15 +52,16 @@ def bar(pct: float | None, width: int) -> Text:
     """1/8 刻みのブロック文字で描くゲージ。"""
     width = max(1, width)
     if pct is None:
-        return Text("·" * width, style="dim")
+        return Text("·" * width, style=C.muted)
     cells = max(0.0, min(100.0, pct)) / 100 * width
     full = int(cells)
     part = int((cells - full) * 8)
     t = Text("█" * full, style=pct_style(pct))
     if full < width:
-        t.append(" ▏▎▍▌▋▊▉"[part] if part else "", style=pct_style(pct))
+        # 途中のマスは残りの部分に空き部分と同じ色を敷き、ゲージに切れ目ができないようにする
+        t.append(" ▏▎▍▌▋▊▉"[part] if part else "", style=f"{pct_style(pct)} on {C.track}")
         rest = width - full - (1 if part else 0)
-        t.append("░" * rest, style="grey30")
+        t.append("█" * rest, style=C.track)
     return t
 
 
@@ -74,18 +74,18 @@ def fmt_reset(dt: datetime, now: datetime) -> str:
 
 def remaining(w: Window, now: datetime) -> Text:
     if w.resets_at is None:
-        return Text("-", style="dim")
+        return Text("-", style=C.muted)
     if is_passed(w, now):
-        return Text("リセット済", style="green")
+        return Text("リセット済", style=C.ok)
     return Text(fmt_duration((w.resets_at - now).total_seconds()))
 
 
 def glyph(st: AccountState) -> Text:
     if st.snapshot is None:
-        return Text("✕", style="bold red")
+        return Text("✕", style=f"bold {C.err}")
     if st.error or st.stale:
-        return Text("◐", style="yellow")
-    return Text("●", style="green")
+        return Text("◐", style=C.warn)
+    return Text("●", style=C.ok)
 
 
 def plan_of(st: AccountState) -> str:
@@ -94,21 +94,12 @@ def plan_of(st: AccountState) -> str:
 
 def freshness(st: AccountState, now: datetime) -> Text:
     if st.snapshot is None:
-        return Text("未取得", style="red")
+        return Text("未取得", style=C.err)
     return Text(
-        fmt_ago(st.snapshot.fetched_at, now), style="yellow" if st.stale else "dim"
+        fmt_ago(st.snapshot.fetched_at, now), style=C.warn if st.stale else C.muted
     )
 
 
-LEGEND = Text.assemble(
-    ("● ", "green"),
-    "取得済  ",
-    ("◐ ", "yellow"),
-    "古い値  ",
-    ("✕ ", "red"),
-    "失敗",
-    style="dim",
-)
 
 
 # ---- 1. カード型 ----
@@ -126,25 +117,25 @@ def card(st: AccountState, now: datetime, width: int) -> Panel:
             lines.append(line)
             sub = Text("    ")
             if w.resets_at:
-                sub.append(f"↻ {fmt_reset(w.resets_at, now)}  ", style="dim")
+                sub.append(f"↻ {fmt_reset(w.resets_at, now)}  ", style=C.muted)
                 sub.append_text(remaining(w, now))
             lines.append(sub)
         if snap.note:
             lines.append(
-                Text(f"    {snap.note}", style="dim", overflow="ellipsis", no_wrap=True)
+                Text(f"    {snap.note}", style=C.muted, overflow="ellipsis", no_wrap=True)
             )
     if st.error:
-        lines.append(Text(st.error, style="red"))
+        lines.append(Text(st.error, style=C.err))
     title = Text.assemble(
-        glyph(st), " ", (st.name, "bold"), (f" · {plan_of(st)}", "dim")
+        glyph(st), " ", (st.name, "bold"), (f" · {plan_of(st)}", C.muted)
     )
     return Panel(
-        Group(*lines) if lines else Text("-", style="dim"),
+        Group(*lines) if lines else Text("-", style=C.muted),
         title=title,
         title_align="left",
         subtitle=freshness(st, now),
         subtitle_align="right",
-        border_style="yellow" if st.error else "grey50",
+        border_style=C.warn if st.error else C.faint,
         width=width,
         padding=(0, 1),
     )
@@ -215,15 +206,15 @@ def render_timeline(
             ):
                 label_line[p : p + len(lab)] = list(lab)
     out: list[RenderableType] = [
-        Text(" " * name_w + "".join(label_line), style="dim"),
-        Text(" " * name_w + "".join(tick_line), style="grey50"),
+        Text(" " * name_w + "".join(label_line), style=C.muted),
+        Text(" " * name_w + "".join(tick_line), style=C.faint),
     ]
 
     for st in states:
         line = Text()
         line.append_text(glyph(st))
         line.append(f" {st.name[: name_w - 3]:<{name_w - 3}} ")
-        axis = Text("·" * axis_w, style="grey30")
+        axis = Text("·" * axis_w, style=C.track)
         axis.stylize("bold", 0, 1)
         detail = Text(" " * name_w)
         windows = st.snapshot.windows if st.snapshot else []
@@ -246,22 +237,24 @@ def render_timeline(
                 f"{p_eff:.0f}% " if p_eff is not None else "- ", style=pct_style(p_eff)
             )
             if w.resets_at:
-                detail.append(f"↻{fmt_reset(w.resets_at, now)}", style="dim")
+                detail.append(f"↻{fmt_reset(w.resets_at, now)}", style=C.muted)
             detail.append("   ")
         if st.error:
-            detail.append(st.error, style="red")
+            detail.append(st.error, style=C.err)
         out += [line, detail]
 
     out.append(Text(""))
     out.append(
         Text.assemble(
-            ("◆ リセット  ▶ 範囲より先  ", "dim"),
-            ("緑 ", "green"),
-            ("<70%  ", "dim"),
-            ("黄 ", "yellow"),
-            ("70-90%  ", "dim"),
-            ("赤 ", "red"),
-            ("≥90%", "dim"),
+            ("◆ リセット  ▶ 範囲より先  ", C.muted),
+            ("■ ", C.low),
+            ("<70%  ", C.muted),
+            ("■ ", C.mid),
+            ("<90%  ", C.muted),
+            ("■ ", C.high),
+            ("<100%  ", C.muted),
+            ("■ ", C.full),
+            ("100%", C.muted),
             (f"     範囲 {_range_name(span)} (←→)", "bold"),
         )
     )
@@ -277,7 +270,7 @@ def render_compact(
     name_w = max(len(s.name) for s in states) if states else 8
     seg_w = 26
     per_line = max(1, (width - name_w - 4) // seg_w)
-    rule = Text("─" * width, style="grey30")
+    rule = Text("─" * width, style=C.track)
     out: list[RenderableType] = [rule]
     for st in states:
         head = Text.assemble(
@@ -288,11 +281,11 @@ def render_compact(
             p = effective_pct(w, now)
             s = Text.assemble((short(w.label, 4), "bold"), bar(p, 8))
             s.append(f" {p:3.0f}% " if p is not None else "    - ", style=pct_style(p))
-            s.append_text(remaining(w, now) if w.resets_at else Text("-", style="dim"))
+            s.append_text(remaining(w, now) if w.resets_at else Text("-", style=C.muted))
             s.pad_right(seg_w - s.cell_len)
             segs.append(s)
         if st.snapshot and st.snapshot.note and st.kind == "cursor":
-            segs.append(Text(st.snapshot.note.replace("プラン枠 ", ""), style="dim"))
+            segs.append(Text(st.snapshot.note.replace("プラン枠 ", ""), style=C.muted))
         lines = [segs[i : i + per_line] for i in range(0, len(segs), per_line)] or [[]]
         for i, chunk in enumerate(lines):
             t = head.copy() if i == 0 else Text(" " * head.cell_len)
@@ -300,7 +293,7 @@ def render_compact(
                 t.append_text(s)
             out.append(t)
         if st.error:
-            out.append(Text(" " * head.cell_len + st.error, style="red"))
+            out.append(Text(" " * head.cell_len + st.error, style=C.err))
     out.append(rule)
     return Group(*out)
 
@@ -325,7 +318,7 @@ def render_next(
     for st in states:
         if st.snapshot is None:
             unknown.append(
-                Text.assemble((st.name, "bold"), (f"  {st.error or '未取得'}", "red"))
+                Text.assemble((st.name, "bold"), (f"  {st.error or '未取得'}", C.err))
             )
             continue
         ws = st.snapshot.windows
@@ -335,22 +328,22 @@ def render_next(
             # 使い切った枠のうち、最後にリセットされるものが空く時刻
             free_at = max((w.resets_at for w in full if w.resets_at), default=None)
             t = Text.assemble((st.name, "bold"), "  ")
-            t.append(", ".join(f"{short(w.label)} 100%" for w in full), style="red")
+            t.append(", ".join(f"{short(w.label)} 100%" for w in full), style=C.err)
             if free_at:
                 t.append(
                     f"  → {fmt_reset(free_at, now)} ({fmt_duration((free_at - now).total_seconds())})",
-                    style="dim",
+                    style=C.muted,
                 )
             blocked.append(t)
         else:
             t = Text.assemble((st.name, "bold"), "  ")
             for w in ws:
                 p = effective_pct(w, now)
-                t.append(f"{short(w.label)} ", style="dim")
+                t.append(f"{short(w.label)} ", style=C.muted)
                 t.append(f"{p:.0f}%  " if p is not None else "-  ", style=pct_style(p))
             usable.append(t)
         if st.stale:
-            (blocked if full else usable)[-1].append("  ◐ 古い値", style="yellow")
+            (blocked if full else usable)[-1].append("  ◐ 古い値", style=C.warn)
 
     head = Table.grid(padding=(0, 2))
     head.add_column(style="bold", width=12)
@@ -360,24 +353,24 @@ def render_next(
         for i, it in enumerate(items):
             head.add_row(Text(label if i == 0 else "", style=style), it)
 
-    section("今使える", usable, "green")
-    section("使えない", blocked, "red")
-    section("不明", unknown, "yellow")
+    section("今使える", usable, C.ok)
+    section("使えない", blocked, C.err)
+    section("不明", unknown, C.warn)
     slots.sort(key=lambda s: s.at)
     if slots:
         n = slots[0]
         head.add_row(Text(""), Text(""))
         head.add_row(
-            Text("次のリセット", style="bold cyan"),
+            Text("次のリセット", style=f"bold {C.accent}"),
             Text.assemble(
                 (f"{n.st.name} {short(n.w.label)}", "bold"),
                 f"   ↻ {fmt_reset(n.at, now)}   ",
-                (fmt_duration((n.at - now).total_seconds()), "bold cyan"),
+                (fmt_duration((n.at - now).total_seconds()), f"bold {C.accent}"),
             ),
         )
 
     table = Table(
-        box=None, padding=(0, 2), show_header=True, header_style="dim", expand=False
+        box=None, padding=(0, 2), show_header=True, header_style=C.muted, expand=False
     )
     for c, j in [
         ("残り", "right"),
@@ -398,13 +391,262 @@ def render_next(
                 bar(p, 8), (f" {p:3.0f}%" if p is not None else "   -", pct_style(p))
             ),
         )
-    rule = Text("── リセットが近い順 " + "─" * max(0, width - 22), style="grey50")
+    rule = Text("── リセットが近い順 " + "─" * max(0, width - 22), style=C.faint)
     return Group(head, Text(""), rule, table)
 
+
+
+# ---- 組み合わせ型で共有する時間軸 ----
+
+
+@dataclass
+class _Axis:
+    now: datetime
+    span: timedelta
+    width: int
+
+    def pos(self, dt: datetime) -> int:
+        """dt の位置。範囲より先は width を返す。位置 0 は「今」なので、直近のリセットも 1 以上にする。"""
+        p = int((dt - self.now) / self.span * (self.width - 1))
+        return self.width if p >= self.width else max(1, p)
+
+    def header(self) -> tuple[Text, Text]:
+        """日時のラベルの行と、目盛りの行。"""
+        labels = [" "] * self.width
+        ticks = [" "] * self.width
+        labels[0], labels[1] = "今", ""  # 「今」は全角で 2 マスを使う
+        ticks[0] = "│"
+        for t, lab in _ticks(self.now, self.span):
+            p = int((t - self.now) / self.span * (self.width - 1))
+            if 2 < p < self.width:
+                ticks[p] = "┆"
+                if p + len(lab) <= self.width and all(c == " " for c in labels[p - 1 : p + len(lab)]):
+                    labels[p : p + len(lab)] = list(lab)
+        return Text("".join(labels), style=C.muted), Text("".join(ticks), style=C.faint)
+
+    def grid(self) -> list[str]:
+        """目盛りの位置にだけ点線を置いた、空の行の地。"""
+        g = [" "] * self.width
+        for t, _ in _ticks(self.now, self.span):
+            p = int((t - self.now) / self.span * (self.width - 1))
+            if 2 < p < self.width:
+                g[p] = "┆"
+        return g
+
+
+def _span(span_index: int) -> timedelta:
+    return TIMELINE_RANGES[span_index % len(TIMELINE_RANGES)]
+
+
+def _span_hint(span: timedelta) -> Text:
+    return Text.assemble(("←→ 範囲 ", C.muted), (_range_name(span), f"bold {C.accent}"))
+
+
+def _windows(st: AccountState) -> list[Window]:
+    return st.snapshot.windows if st.snapshot else []
+
+
+def _segment(w: Window, now: datetime, bar_w: int = 6) -> Text:
+    """コンパクト一覧の 1 枠ぶん。「週 ████▊█  79% 1d20h」（後ろの █ は空き部分の色）。"""
+    p = effective_pct(w, now)
+    s = Text.assemble((short(w.label, 3), C.muted), bar(p, bar_w))
+    s.append(f" {p:3.0f}%" if p is not None else "    -", style=pct_style(p))
+    s.append(" ")
+    rem = remaining(w, now)
+    rem.stylize(C.muted)
+    s.append_text(rem)
+    return s
+
+
+def _name_cell(st: AccountState, name_w: int) -> Text:
+    return Text.assemble(" ", glyph(st), " ", (f"{st.name:<{name_w}}", f"bold {C.fg}"), " ")
+
+
+# ---- A. 右端ミニ軸 ----
+
+
+def render_mini(states: list[AccountState], now: datetime, width: int, span_index: int = 1, **_) -> RenderableType:
+    span = _span(span_index)
+    name_w = max([len(s.name) for s in states] + [6])
+    seg_w = 24
+    left_w = 3 + name_w + 1 + 2 * seg_w
+    axis_w = width - left_w - 1
+    show_axis = axis_w >= 16
+    ax = _Axis(now, span, max(axis_w, 16))
+    out: list[RenderableType] = []
+    if show_axis:
+        lab, tick = ax.header()
+        out += [Text(" " * left_w) + lab, Text(" " * left_w) + tick]
+    for st in states:
+        ws = _windows(st)
+        segs = [_segment(w, now) for w in ws]
+        if st.snapshot and st.snapshot.note and st.kind == "cursor":
+            segs.append(Text(st.snapshot.note.replace("プラン枠 ", ""), style=C.muted))
+        rows = [segs[i : i + 2] for i in range(0, len(segs), 2)] or [[]]
+        for i, chunk in enumerate(rows):
+            t = _name_cell(st, name_w) if i == 0 else Text(" " * (3 + name_w + 1))
+            for sg in chunk:
+                sg = sg.copy()
+                sg.truncate(seg_w, pad=True)
+                t.append_text(sg)
+            t.pad_right(left_w - t.cell_len)
+            if show_axis and i == 0:
+                line = Text("".join(ax.grid()), style=C.faint)
+                line = Text("·", style=C.faint) + line[1:]
+                for w in ws:
+                    if w.resets_at is None or is_passed(w, now):
+                        continue
+                    p = ax.pos(w.resets_at)
+                    mark, p = ("▶", ax.width - 1) if p >= ax.width else ("◆", p)
+                    line = line[:p] + Text(mark, style=pct_style(effective_pct(w, now))) + line[p + 1 :]
+                t.append(" ")
+                t.append_text(line)
+            out.append(t)
+        if st.error:
+            out.append(Text(" " * (3 + name_w + 1) + st.error, style=C.err))
+    out += [Text(""), Text.assemble(("◆ リセット  ▶ 範囲より先    ", C.muted), _span_hint(span))]
+    return Group(*out)
+
+
+# ---- B. ガント型 ----
+
+
+def render_gantt(states: list[AccountState], now: datetime, width: int, span_index: int = 1, **_) -> RenderableType:
+    span = _span(span_index)
+    name_w = max([len(s.name) for s in states] + [6])
+    left_w = 3 + name_w + 1 + 9
+    ax = _Axis(now, span, max(20, width - left_w))
+    lab, tick = ax.header()
+    out: list[RenderableType] = [Text(" " * left_w) + lab, Text(" " * left_w) + tick]
+    for st in states:
+        ws = _windows(st) or [Window("-", None, None)]
+        for i, w in enumerate(ws):
+            p_eff = effective_pct(w, now)
+            color = pct_style(p_eff)
+            t = _name_cell(st, name_w) if i == 0 else Text(" " * (3 + name_w + 1))
+            t.append(short(w.label, 3), style=C.muted)
+            t.append(f"{p_eff:4.0f}% " if p_eff is not None else "    - ", style=color)
+            line = Text("".join(ax.grid()), style=C.faint)
+            if w.resets_at and not is_passed(w, now):
+                end = ax.pos(w.resets_at)
+                beyond = end >= ax.width
+                end = ax.width - 1 if beyond else end
+                stroke = "━" if (p_eff or 0) >= 100 else "─"
+                # 低い使用率の線は地に近い色にして、使用率の高い枠だけが目に入るようにする
+                line_color = C.faint if (p_eff or 0) < 70 else color
+                line = Text(stroke * end, style=line_color) + Text("▶" if beyond else "◆", style=color) + line[end + 1 :]
+                tag = fmt_reset(w.resets_at, now)
+                if not beyond and end + 2 + len(tag) <= ax.width:
+                    line = line[: end + 1] + Text(f" {tag}", style=C.muted) + line[end + 2 + len(tag) :]
+                elif end - len(tag) - 1 > 0:
+                    # 右に入りきらないときは、印の左の線の上に重ねて置く
+                    line = line[: end - len(tag) - 1] + Text(f"{tag} ", style=C.muted) + line[end:]
+            elif w.resets_at:
+                done = Text("◇ リセット済", style=C.ok)
+                line = done + line[done.cell_len :]
+            t.append_text(line)
+            out.append(t)
+        if st.error:
+            out.append(Text(" " * left_w + st.error, style=C.err))
+    out += [
+        Text(""),
+        Text.assemble(
+            ("─ リセットまで  ", C.muted),
+            ("━ 使い切り（使えない期間）  ", C.full),
+            ("◆ リセット  ▶ 範囲より先    ", C.muted),
+            _span_hint(span),
+        ),
+    ]
+    return Group(*out)
+
+
+# ---- C. 上下 2 段 ----
+
+
+def _initials(states: list[AccountState]) -> dict[str, str]:
+    """アカウントごとに重ならない 1 文字を決める。名前の中で、まだ使われていない最初の英数字を選ぶ。"""
+    used: set[str] = set()
+    out: dict[str, str] = {}
+    for st in states:
+        # 「claude-private」なら区切りの後ろ（p）を優先する
+        parts = st.name.replace("_", "-").split("-")
+        cands = [c for c in (parts[-1] + st.name) if c.isalnum()]
+        ch = next((c.upper() for c in cands if c.upper() not in used), "?")
+        used.add(ch)
+        out[st.name] = ch
+    return out
+
+
+def render_split(states: list[AccountState], now: datetime, width: int, span_index: int = 1, **_) -> RenderableType:
+    span = _span(span_index)
+    name_w = max([len(s.name) for s in states] + [6])
+    initials = _initials(states)
+    out: list[RenderableType] = []
+    for st in states:
+        segs = [_segment(w, now, bar_w=8) for w in _windows(st)]
+        if st.snapshot and st.snapshot.note and st.kind == "cursor":
+            segs.append(Text(st.snapshot.note.replace("プラン枠 ", ""), style=C.muted))
+        t = _name_cell(st, name_w)
+        for sg in segs:
+            sg = sg.copy()
+            sg.truncate(28, pad=True)
+            t.append_text(sg)
+        t.truncate(width)
+        out.append(t)
+        if st.error:
+            out.append(Text(" " * (3 + name_w + 1) + st.error, style=C.err))
+    out.append(Text(""))
+
+    ax = _Axis(now, span, max(20, width - 2))
+    lab, tick = ax.header()
+    line = Text("●", style=f"bold {C.fg}") + Text("".join(ax.grid())[1:], style=C.faint)
+    # 印の下に「頭文字 + 枠」のラベルを置く。重なるときは下の段へずらす
+    label_rows: list[list[tuple[int, Text]]] = []
+    occupied: list[set[int]] = []
+    marks = []
+    for st in states:
+        for w in _windows(st):
+            if w.resets_at is None or is_passed(w, now):
+                continue
+            p = ax.pos(w.resets_at)
+            marks.append((min(p, ax.width - 1), p >= ax.width, st, w))
+    marks.sort(key=lambda m: m[0])
+    for p, beyond, st, w in marks:
+        color = pct_style(effective_pct(w, now))
+        line = line[:p] + Text("▶" if beyond else "◆", style=color) + line[p + 1 :]
+        tag = Text.assemble((initials[st.name], f"bold {color}"), (short(w.label), C.muted))
+        start = min(p, ax.width - tag.cell_len)
+        cells = set(range(start, start + tag.cell_len + 1))
+        for r, occ in enumerate(occupied):
+            if not occ & cells:
+                break
+        else:
+            r = len(occupied)
+            occupied.append(set())
+            label_rows.append([])
+        occupied[r] |= cells
+        label_rows[r].append((start, tag))
+    rows: list[RenderableType] = [Text(" ") + lab, Text(" ") + tick, Text(" ") + line]
+    for items in label_rows:
+        t = Text(" ")
+        for start, tag in sorted(items, key=lambda x: x[0]):
+            t.pad_right(1 + start - t.cell_len)
+            t.append_text(tag)
+        rows.append(t)
+    out += rows
+    legend = Text(" ")
+    for st in states:
+        legend.append(initials[st.name], style=f"bold {C.fg}")
+        legend.append(f" {st.name}   ", style=C.muted)
+    out += [Text(""), legend, Text.assemble(" ", _span_hint(span))]
+    return Group(*out)
 
 VIEWS = {
     "cards": ("カード", render_cards),
     "timeline": ("タイムライン", render_timeline),
     "compact": ("コンパクト", render_compact),
     "next": ("次に空く", render_next),
+    "mini": ("A. 右端ミニ軸", render_mini),
+    "gantt": ("B. ガント", render_gantt),
+    "split": ("C. 上下 2 段", render_split),
 }
