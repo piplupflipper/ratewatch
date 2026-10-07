@@ -1,0 +1,17 @@
+[project]
+name = "ratewatch"
+version = "0.1.0"
+description = "TUI dashboard for Claude / Codex / Cursor rate-limit reset times across multiple accounts"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["textual>=0.80"]
+
+[project.scripts]
+ratewatch = "ratewatch.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
