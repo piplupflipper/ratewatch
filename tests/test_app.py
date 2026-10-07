@@ -22,22 +22,19 @@ def test_keys_switch_views_and_remember_the_choice(app, tmp_path):
     async def run():
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause(0.3)
-            assert app.view == "cards"
-            for key, view in [("2", "timeline"), ("3", "compact"), ("4", "next"), ("1", "cards")]:
-                await pilot.press(key)
-                assert app.view == view
-            for key, view in [("5", "mini"), ("6", "gantt"), ("7", "split")]:
+            assert app.view == "line"
+            assert app.palette_name == "iceberg"
+            assert app.theme == "iceberg"
+            for key, view in [("1", "lean"), ("3", "labeled"), ("4", "focus"), ("5", "mini"), ("2", "line")]:
                 await pilot.press(key)
                 assert app.view == view
             await pilot.press("t")
-            assert app.palette_name == "catppuccin"
-            assert app.theme == "catppuccin-mocha"
-            await pilot.press("2", "right")
+            assert app.palette_name == "mono"
+            await pilot.press("right")
             assert app.span_index == 2
             await pilot.press("r")
             await pilot.pause(0.2)
 
     asyncio.run(run())
-    assert (tmp_path / "view").read_text() == "timeline"
-    assert app_mod.load_view(tmp_path / "view") == "timeline"
-    assert (tmp_path / "theme").read_text() == "catppuccin"
+    assert app_mod.load_view(tmp_path / "view") == "line"
+    assert (tmp_path / "theme").read_text() == "mono"

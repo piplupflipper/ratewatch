@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from textual.theme import Theme
+
 
 @dataclass(frozen=True)
 class Palette:
@@ -22,7 +24,7 @@ class Palette:
     high: str  # 100% 未満
     full: str  # 使い切り
     accent: str  # 強調（次のリセットなど）
-    bg: str
+    bg: str | None  # None なら塗らずに端末の背景色を使う
 
     @property
     def ok(self) -> str:
@@ -38,6 +40,21 @@ class Palette:
 
 
 PALETTES: dict[str, Palette] = {
+    # cocopon/iceberg.vim の colors/iceberg.vim（23835d5）のダーク版から取った。背景は塗らない
+    "iceberg": Palette(
+        label="Iceberg",
+        textual_theme="iceberg",
+        fg="#c6c8d1",  # Normal
+        muted="#6b7089",  # Comment
+        faint="#444b71",  # LineNr の文字色
+        track="#272c42",  # Visual の背景色
+        low="#84a0c6",  # Function
+        mid="#e2a478",  # Title
+        high="#e98989",  # terminal_color_9
+        full="#e27878",  # ErrorMsg
+        accent="#89b8c2",  # Identifier
+        bg=None,
+    ),
     "mono": Palette(
         label="単色アクセント",
         textual_theme="atom-one-dark",
@@ -95,7 +112,7 @@ PALETTES: dict[str, Palette] = {
         bg="#2e3440",
     ),
 }
-DEFAULT_THEME = "tokyo-night"
+DEFAULT_THEME = "iceberg"
 
 _active: Palette = PALETTES[DEFAULT_THEME]
 
@@ -126,3 +143,39 @@ def pct_color(pct: float | None) -> str:
     if pct >= 70:
         return C.mid
     return C.low
+
+
+# Textual に組み込みのテーマが無い配色のために登録するテーマ。ヘッダーとフッターの色に使う
+TEXTUAL_THEMES = [
+    Theme(
+        name="iceberg",
+        primary="#84a0c6",
+        secondary="#89b8c2",
+        accent="#89b8c2",
+        warning="#e2a478",
+        error="#e27878",
+        success="#b4be82",
+        foreground="#c6c8d1",
+        background="ansi_default",
+        surface="ansi_default",
+        panel="ansi_default",
+        boost="ansi_default",
+        dark=True,
+        ansi=True,
+        # ansi=True のテーマでは Textual の組み込みの CSS がこれらの変数を参照する（textual/theme.py の ansi-dark と同じ組）
+        variables={
+            "ansi-background": "#1e2132",  # terminal_color_0
+            "ansi-foreground": "#c6c8d1",
+            "border-blurred": "#1e2132",
+            "block-cursor-foreground": "#161821",
+            "block-cursor-background": "#c6c8d1",
+            "input-cursor-background": "#c6c8d1",
+            "input-cursor-foreground": "#161821",
+            "input-cursor-text-style": "none",
+            "input-selection-background": "#272c42",
+            "input-selection-foreground": "#c6c8d1",
+            "screen-selection-background": "#272c42",
+            "screen-selection-foreground": "#c6c8d1",
+        },
+    ),
+]

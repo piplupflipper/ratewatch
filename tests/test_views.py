@@ -5,7 +5,11 @@ from rich.console import Console
 
 from ratewatch.model import AccountState, Snapshot, Window
 from ratewatch.theme import PALETTES, set_theme
-from ratewatch.views import VIEWS, bar
+from ratewatch.views import VIEWS as BASE_VIEWS
+from ratewatch.views import bar
+from ratewatch.views_mini import VARIANTS
+
+VIEWS = {**BASE_VIEWS, **VARIANTS}
 
 NOW = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
 
@@ -85,3 +89,20 @@ def test_split_initials_are_unique():
     ini = _initials(states())
     assert len(set(ini.values())) == len(ini)
     assert ini["claude-private"] == "P"
+
+
+@pytest.mark.parametrize("view", list(VARIANTS))
+def test_variants_put_labels_on_axis_without_breaking_width(view):
+    set_theme("iceberg")
+    out = text_of(VARIANTS[view][1](states(), NOW, 140, span_index=1), 140)
+    assert max(len(line) for line in out.splitlines()) <= 140
+    if view in ("labeled", "focus"):
+        # 週の枠の印に名前が付く
+        assert "◆週" in out
+
+
+def test_focus_names_next_reset_and_blocked_accounts():
+    out = text_of(VARIANTS["focus"][1](states(), NOW, 140), 140)
+    assert "次のリセット" in out and "claude-private 5h" in out
+    blocked = next(line for line in out.splitlines() if "使えない" in line)
+    assert "codex" in blocked

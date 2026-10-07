@@ -11,15 +11,21 @@ from textual.widgets import Footer, Header, Static
 from .collect import cached_states, refresh
 from .config import CACHE_PATH, Account
 from .model import AccountState, now_utc
-from .theme import DEFAULT_THEME, PALETTES, set_theme
-from .views import TIMELINE_RANGES, VIEWS
+from .theme import DEFAULT_THEME, PALETTES, TEXTUAL_THEMES, set_theme
+from .views import TIMELINE_RANGES
+from .views import VIEWS as BASE_VIEWS
+from .views_mini import VARIANTS
+
+# 1 から 4 は右端ミニ軸の改良案、5 は改良前の右端ミニ軸。それ以外の画面は --view でだけ開ける
+VIEWS = {**VARIANTS, **BASE_VIEWS}
+KEYED_VIEWS = [*VARIANTS, "mini"]
 
 REFRESH_SECONDS = 300
 VIEW_PATH = CACHE_PATH.parent / "view"
 THEME_PATH = CACHE_PATH.parent / "theme"
-DEFAULT_VIEW = "cards"
+DEFAULT_VIEW = "line"
 # ←→ で時間軸の範囲を変えられるパターン
-SPAN_VIEWS = {"timeline", "mini", "gantt", "split"}
+SPAN_VIEWS = {"timeline", "mini", "gantt", "split", *VARIANTS}
 
 
 def _load(path: Path, valid: dict, default: str) -> str:
@@ -61,10 +67,7 @@ class RatewatchApp(App):
     #status { height: 1; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
-        *[
-            Binding(str(i + 1), f"view('{key}')", title.split(". ")[-1])
-            for i, (key, (title, _)) in enumerate(VIEWS.items())
-        ],
+        *[Binding(str(i + 1), f"view('{key}')", VIEWS[key][0].split(". ")[-1]) for i, key in enumerate(KEYED_VIEWS)],
         Binding("left", "span(-1)", "範囲", show=False),
         Binding("right", "span(1)", "範囲", show=False),
         Binding("t", "next_theme", "配色"),
@@ -82,6 +85,8 @@ class RatewatchApp(App):
         self.view = view if view in VIEWS else load_view()
         self.palette_name = theme if theme in PALETTES else load_theme()
         self.span_index = 1  # 時間軸の範囲。既定は 7 日
+        for t in TEXTUAL_THEMES:
+            self.register_theme(t)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -105,7 +110,7 @@ class RatewatchApp(App):
         self.theme = palette.textual_theme
         # 地の色を画面全体にそろえる。本文のウィジェットに Textual のテーマの背景が残ると、文字のある部分だけが帯に見える
         for node in (self.screen, self.query_one("#body"), self.query_one("#view"), self.query_one("#status")):
-            node.styles.background = palette.bg
+            node.styles.background = palette.bg or "ansi_default"
         self.redraw()
 
     def redraw(self) -> None:
