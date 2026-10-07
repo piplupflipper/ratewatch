@@ -10,6 +10,11 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="ratewatch", description="Claude / Codex / Cursor のレートリミットのリセット時刻を並べる")
     p.add_argument("--once", action="store_true", help="TUI を開かず、1 回取得して表を出力して終わる")
     p.add_argument("--config", default=str(CONFIG_PATH), help=f"設定ファイル（既定: {CONFIG_PATH}）")
+    p.add_argument(
+        "--view",
+        choices=["cards", "timeline", "compact", "next"],
+        help="起動時の描画パターン（既定: 前回選んだもの）",
+    )
     args = p.parse_args()
 
     from pathlib import Path
@@ -37,7 +42,7 @@ def main() -> None:
 
     from .app import RatewatchApp
 
-    RatewatchApp(accounts).run()
+    RatewatchApp(accounts, view=args.view).run()
 
 
 if __name__ == "__main__":
