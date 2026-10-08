@@ -25,6 +25,19 @@ class Palette:
     full: str  # 使い切り
     accent: str  # 強調（次のリセットなど）
     bg: str | None  # None なら塗らずに端末の背景色を使う
+    # 枠の種類の色（5 時間枠、週の枠、請求サイクル、クレジット）。空なら強調色や本文の色で代える
+    k5h: str = ""
+    kweek: str = ""
+    kmonth: str = ""
+    kcredit: str = ""
+
+    def kind(self, kind: str) -> str:
+        return {
+            "5h": self.k5h or self.accent,
+            "week": self.kweek or self.mid,
+            "month": self.kmonth or self.low,
+            "credit": self.kcredit or self.fg,
+        }.get(kind, self.muted)
 
     @property
     def ok(self) -> str:
@@ -54,6 +67,10 @@ PALETTES: dict[str, Palette] = {
         full="#e27878",  # ErrorMsg
         accent="#89b8c2",  # Identifier
         bg=None,
+        k5h="#89b8c2",  # Identifier
+        kweek="#a093c7",  # Constant
+        kmonth="#b4be82",  # PreProc
+        kcredit="#c6c8d1",  # Normal
     ),
     "mono": Palette(
         label="単色アクセント",
@@ -126,7 +143,7 @@ def set_theme(name: str) -> Palette:
 class _Current:
     """`C.low` のように書くと、その時点の配色の色を返す。"""
 
-    def __getattr__(self, name: str) -> str:
+    def __getattr__(self, name: str):
         return getattr(_active, name)
 
 

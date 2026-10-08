@@ -22,10 +22,10 @@ def test_keys_switch_views_and_remember_the_choice(app, tmp_path):
     async def run():
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause(0.3)
-            assert app.view == "line"
+            assert app.view == "kind"
             assert app.palette_name == "iceberg"
             assert app.theme == "iceberg"
-            for key, view in [("1", "lean"), ("3", "labeled"), ("4", "focus"), ("5", "mini"), ("2", "line")]:
+            for key, view in [("2", "kind-split"), ("3", "kind-left"), ("4", "kind-shape"), ("5", "usage"), ("1", "kind")]:
                 await pilot.press(key)
                 assert app.view == view
             await pilot.press("t")
@@ -36,5 +36,5 @@ def test_keys_switch_views_and_remember_the_choice(app, tmp_path):
             await pilot.pause(0.2)
 
     asyncio.run(run())
-    assert app_mod.load_view(tmp_path / "view") == "line"
+    assert app_mod.load_view(tmp_path / "view") == "kind"
     assert (tmp_path / "theme").read_text() == "mono"

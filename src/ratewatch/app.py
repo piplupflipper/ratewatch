@@ -16,14 +16,14 @@ from .views import TIMELINE_RANGES
 from .views import VIEWS as BASE_VIEWS
 from .views_mini import VARIANTS
 
-# 1 から 4 は右端ミニ軸の改良案、5 は改良前の右端ミニ軸。それ以外の画面は --view でだけ開ける
+# 1 から 5 は右端ミニ軸の色分けの案。それ以外の画面は --view でだけ開ける
 VIEWS = {**VARIANTS, **BASE_VIEWS}
-KEYED_VIEWS = [*VARIANTS, "mini"]
+KEYED_VIEWS = list(VARIANTS)
 
 REFRESH_SECONDS = 300
 VIEW_PATH = CACHE_PATH.parent / "view"
 THEME_PATH = CACHE_PATH.parent / "theme"
-DEFAULT_VIEW = "line"
+DEFAULT_VIEW = "kind"
 # ←→ で時間軸の範囲を変えられるパターン
 SPAN_VIEWS = {"timeline", "mini", "gantt", "split", *VARIANTS}
 
@@ -68,8 +68,8 @@ class RatewatchApp(App):
     """
     BINDINGS = [
         *[Binding(str(i + 1), f"view('{key}')", VIEWS[key][0].split(". ")[-1]) for i, key in enumerate(KEYED_VIEWS)],
-        Binding("left", "span(-1)", "範囲", show=False),
-        Binding("right", "span(1)", "範囲", show=False),
+        Binding("left", "span(-1)", "縮小", show=False),
+        Binding("right", "span(1)", "拡大", show=False),
         Binding("t", "next_theme", "配色"),
         Binding("r", "refresh", "再取得"),
         Binding("q", "quit", "終了"),

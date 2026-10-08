@@ -7,7 +7,7 @@ from ratewatch.model import AccountState, Snapshot, Window
 from ratewatch.theme import PALETTES, set_theme
 from ratewatch.views import VIEWS as BASE_VIEWS
 from ratewatch.views import bar
-from ratewatch.views_mini import VARIANTS
+from ratewatch.views_mini import VARIANTS, ZOOMS, MiniAxis, kind_of
 
 VIEWS = {**BASE_VIEWS, **VARIANTS}
 
@@ -96,13 +96,46 @@ def test_variants_put_labels_on_axis_without_breaking_width(view):
     set_theme("iceberg")
     out = text_of(VARIANTS[view][1](states(), NOW, 140, span_index=1), 140)
     assert max(len(line) for line in out.splitlines()) <= 140
-    if view in ("labeled", "focus"):
-        # 週の枠の印に名前が付く
-        assert "◆週" in out
+    # 週の枠の印に名前が付く（形を変える案でも、週の印は ◆）
+    assert "◆週" in out
 
 
-def test_focus_names_next_reset_and_blocked_accounts():
-    out = text_of(VARIANTS["focus"][1](states(), NOW, 140), 140)
-    assert "次のリセット" in out and "claude-private 5h" in out
-    blocked = next(line for line in out.splitlines() if "使えない" in line)
-    assert "codex" in blocked
+@pytest.mark.parametrize("zoom", range(len(ZOOMS)))
+@pytest.mark.parametrize("width", range(20, 201))
+def test_ticks_are_evenly_spaced_at_any_width(width, zoom):
+    for hour in range(24):
+        now = NOW.replace(hour=hour, minute=17)
+        ax = MiniAxis(now, width, ZOOMS[zoom])
+        ps = [p for p, _ in ax.tick_positions()]
+        assert all(b - a == ZOOMS[zoom] for a, b in zip(ps, ps[1:]))
+        assert all(0 < p < width for p in ps)
+        # ヘッダーの日付は目盛りの位置から始まり、幅を超えない
+        head = ax.header()
+        assert head.cell_len == width
+        for p, day in ax.tick_positions():
+            lab = day.strftime("%m/%d")
+            if head.plain.find(lab) != -1:
+                assert head.plain.index(lab) + 1 == p  # 「今」は 2 マスで 1 文字なので、文字列上は 1 小さい
+
+
+def test_wider_terminal_shows_more_days_with_same_spacing():
+    narrow = MiniAxis(NOW, 40, ZOOMS[1])
+    wide = MiniAxis(NOW, 120, ZOOMS[1])
+    assert wide.span > narrow.span
+    assert wide.tick_positions()[:2] == narrow.tick_positions()[:2]
+
+
+def test_marker_on_midnight_sits_on_tick():
+    ax = MiniAxis(NOW, 100, ZOOMS[1])
+    p, day = ax.tick_positions()[1]
+    assert ax.x(day) == p
+
+
+def test_kind_colors_differ_between_5h_and_week():
+    set_theme("iceberg")
+    from ratewatch.theme import C
+
+    assert C.kind("5h") != C.kind("week")
+    assert kind_of(Window("5h", 0, None)) == "5h"
+    assert kind_of(Window("週 Opus", 0, None)) == "week"
+    assert kind_of(Window("請求サイクル", 0, None)) == "month"
