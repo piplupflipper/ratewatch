@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from textual import work
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.widgets import Footer, Header, Static
 
-from .collect import COLUMNS, build_rows, cached_states, refresh
+from .collect import cached_states, refresh
 from .config import Account
 from .model import AccountState, now_utc
+from .theme import ICEBERG
+from .view import DEFAULT_ZOOM, ZOOMS, render
 
 REFRESH_SECONDS = 300
 
@@ -14,39 +18,54 @@ REFRESH_SECONDS = 300
 class RatewatchApp(App):
     TITLE = "ratewatch"
     CSS = """
-    DataTable { height: 1fr; }
+    Screen, #body, #view, #status { background: ansi_default; }
+    #body { height: 1fr; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     """
-    BINDINGS = [("r", "refresh", "再取得"), ("q", "quit", "終了")]
+    BINDINGS = [
+        Binding("left", "zoom(-1)", "縮小"),
+        Binding("right", "zoom(1)", "拡大"),
+        Binding("r", "refresh", "再取得"),
+        Binding("q", "quit", "終了"),
+    ]
 
     def __init__(self, accounts: list[Account]) -> None:
         super().__init__()
         self.accounts = accounts
         self.states: list[AccountState] = cached_states(accounts)
         self.fetching = False
+        self.zoom = DEFAULT_ZOOM
+        self.register_theme(ICEBERG)
+        self.theme = ICEBERG.name
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield DataTable(zebra_stripes=True, cursor_type="row")
+        with VerticalScroll(id="body"):
+            yield Static(id="view")
         yield Static("", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one(DataTable).add_columns(*COLUMNS)
         self.redraw()
         # 残り時間は毎秒ローカルで数え直し、API は REFRESH_SECONDS ごとにだけ叩く
         self.set_interval(1, self.redraw)
         self.set_interval(REFRESH_SECONDS, self.action_refresh)
         self.action_refresh()
 
+    def on_resize(self) -> None:
+        self.redraw()
+
     def redraw(self) -> None:
-        table = self.query_one(DataTable)
-        row = table.cursor_row
-        table.clear()
-        for r in build_rows(self.states, now_utc()):
-            table.add_row(*r.cells)
-        if table.row_count:
-            table.move_cursor(row=min(row, table.row_count - 1))
+        body = self.query_one("#body", VerticalScroll)
+        # スクロールバーと左右の余白のぶんを引いた幅で描く
+        width = max(40, body.size.width - 3)
+        self.query_one("#view", Static).update(
+            render(self.states, now_utc(), width, self.zoom)
+        )
+
+    def action_zoom(self, delta: int) -> None:
+        self.zoom = max(0, min(len(ZOOMS) - 1, self.zoom + delta))
+        self.redraw()
 
     def action_refresh(self) -> None:
         if self.fetching:
@@ -67,6 +86,6 @@ class RatewatchApp(App):
         at = now_utc().astimezone().strftime("%H:%M:%S")
         msg = f"{at} に取得（{REFRESH_SECONDS // 60} 分ごとに自動取得）"
         if failed:
-            msg += f"  失敗 {failed} 件（キャッシュの値を表示中）"
+            msg += f"  失敗 {failed} 件（保存しておいた値を表示中）"
         self.query_one("#status", Static).update(msg)
         self.redraw()
