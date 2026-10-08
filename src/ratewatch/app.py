@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -9,84 +7,36 @@ from textual.containers import VerticalScroll
 from textual.widgets import Footer, Header, Static
 
 from .collect import cached_states, refresh
-from .config import CACHE_PATH, Account
+from .config import Account
 from .model import AccountState, now_utc
-from .theme import DEFAULT_THEME, PALETTES, TEXTUAL_THEMES, set_theme
-from .views import TIMELINE_RANGES
-from .views import VIEWS as BASE_VIEWS
-from .views_mini import VARIANTS
-
-# 1 から 5 は右端ミニ軸の色分けの案。それ以外の画面は --view でだけ開ける
-VIEWS = {**VARIANTS, **BASE_VIEWS}
-KEYED_VIEWS = list(VARIANTS)
+from .theme import ICEBERG
+from .view import DEFAULT_ZOOM, ZOOMS, render
 
 REFRESH_SECONDS = 300
-VIEW_PATH = CACHE_PATH.parent / "view"
-THEME_PATH = CACHE_PATH.parent / "theme"
-DEFAULT_VIEW = "kind"
-# ←→ で時間軸の範囲を変えられるパターン
-SPAN_VIEWS = {"timeline", "mini", "gantt", "split", *VARIANTS}
-
-
-def _load(path: Path, valid: dict, default: str) -> str:
-    try:
-        v = path.read_text().strip()
-    except OSError:
-        return default
-    return v if v in valid else default
-
-
-def _save(path: Path, value: str) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(value)
-    except OSError:
-        pass  # 保存できなくても表示には影響しない
-
-
-def load_view(path: Path | None = None) -> str:
-    return _load(path or VIEW_PATH, VIEWS, DEFAULT_VIEW)
-
-
-def save_view(view: str, path: Path | None = None) -> None:
-    _save(path or VIEW_PATH, view)
-
-
-def load_theme(path: Path | None = None) -> str:
-    return _load(path or THEME_PATH, PALETTES, DEFAULT_THEME)
-
-
-def save_theme(theme: str, path: Path | None = None) -> None:
-    _save(path or THEME_PATH, theme)
 
 
 class RatewatchApp(App):
     TITLE = "ratewatch"
     CSS = """
+    Screen, #body, #view, #status { background: ansi_default; }
     #body { height: 1fr; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
-        *[Binding(str(i + 1), f"view('{key}')", VIEWS[key][0].split(". ")[-1]) for i, key in enumerate(KEYED_VIEWS)],
-        Binding("left", "span(-1)", "縮小", show=False),
-        Binding("right", "span(1)", "拡大", show=False),
-        Binding("t", "next_theme", "配色"),
+        Binding("left", "zoom(-1)", "縮小"),
+        Binding("right", "zoom(1)", "拡大"),
         Binding("r", "refresh", "再取得"),
         Binding("q", "quit", "終了"),
     ]
 
-    def __init__(
-        self, accounts: list[Account], view: str | None = None, theme: str | None = None
-    ) -> None:
+    def __init__(self, accounts: list[Account]) -> None:
         super().__init__()
         self.accounts = accounts
         self.states: list[AccountState] = cached_states(accounts)
         self.fetching = False
-        self.view = view if view in VIEWS else load_view()
-        self.palette_name = theme if theme in PALETTES else load_theme()
-        self.span_index = 1  # 時間軸の範囲。既定は 7 日
-        for t in TEXTUAL_THEMES:
-            self.register_theme(t)
+        self.zoom = DEFAULT_ZOOM
+        self.register_theme(ICEBERG)
+        self.theme = ICEBERG.name
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -96,7 +46,7 @@ class RatewatchApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.apply_theme()
+        self.redraw()
         # 残り時間は毎秒ローカルで数え直し、API は REFRESH_SECONDS ごとにだけ叩く
         self.set_interval(1, self.redraw)
         self.set_interval(REFRESH_SECONDS, self.action_refresh)
@@ -105,40 +55,17 @@ class RatewatchApp(App):
     def on_resize(self) -> None:
         self.redraw()
 
-    def apply_theme(self) -> None:
-        palette = set_theme(self.palette_name)
-        self.theme = palette.textual_theme
-        # 地の色を画面全体にそろえる。本文のウィジェットに Textual のテーマの背景が残ると、文字のある部分だけが帯に見える
-        for node in (self.screen, self.query_one("#body"), self.query_one("#view"), self.query_one("#status")):
-            node.styles.background = palette.bg or "ansi_default"
-        self.redraw()
-
     def redraw(self) -> None:
         body = self.query_one("#body", VerticalScroll)
         # スクロールバーと左右の余白のぶんを引いた幅で描く
         width = max(40, body.size.width - 3)
-        title, render = VIEWS[self.view]
-        self.sub_title = f"{title} · {PALETTES[self.palette_name].label}"
         self.query_one("#view", Static).update(
-            render(self.states, now_utc(), width, span_index=self.span_index)
+            render(self.states, now_utc(), width, self.zoom)
         )
 
-    def action_view(self, view: str) -> None:
-        if view in VIEWS:
-            self.view = view
-            save_view(view)
-            self.redraw()
-
-    def action_span(self, delta: int) -> None:
-        if self.view in SPAN_VIEWS:
-            self.span_index = (self.span_index + delta) % len(TIMELINE_RANGES)
-            self.redraw()
-
-    def action_next_theme(self) -> None:
-        names = list(PALETTES)
-        self.palette_name = names[(names.index(self.palette_name) + 1) % len(names)]
-        save_theme(self.palette_name)
-        self.apply_theme()
+    def action_zoom(self, delta: int) -> None:
+        self.zoom = max(0, min(len(ZOOMS) - 1, self.zoom + delta))
+        self.redraw()
 
     def action_refresh(self) -> None:
         if self.fetching:

@@ -1,7 +1,7 @@
-"""右端ミニ軸の画面。
+"""TUI の画面。
 
 1 アカウントを 1 行にして、左に使用率と残り時間、右端に短い時間軸を置く。
-時間軸には、各枠のリセット時刻に印と枠の名前（5h、週、月、積）を置く。
+時間軸には、各枠のリセット時刻に印と枠の名前（5h、週、月、積）を置き、枠の種類で色を分ける。
 
 時間軸は 1 マスあたりの時間を固定する（既定は 2 時間）。
 表示する範囲を軸の幅に引き伸ばすと、1 日あたりのマス数が半端になり、目盛りの位置を整数に丸めたときに間隔がそろわないため。
@@ -11,16 +11,15 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from datetime import datetime, timedelta
 
+from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.text import Text
 
 from .collect import fmt_duration
 from .model import AccountState, Window
-from .theme import C
-from .views import effective_pct, is_passed, pct_style, short
+from .theme import C, pct_color
 
 AXIS_MIN = 18
 # 1 日あたりのマス数。←→ で切り替える。1 マスはそれぞれ 6 時間、2 時間、1 時間
@@ -28,6 +27,20 @@ ZOOMS = [4, 12, 24]
 DEFAULT_ZOOM = 1
 # 日付のラベル（10/09）は 5 マスなので、間を 1 マス空けて 6 マス以上の間隔で置く
 LABEL_CELLS = 6
+SEG_W = 27
+
+SHORT_LABEL = {
+    "クレジット": "積",
+    "請求サイクル": "月",
+    "週 Opus": "週O",
+    "週 Sonnet": "週S",
+}
+
+
+def short(label: str, width: int = 0) -> str:
+    """枠の短い名前。width を渡すと、全角を 2 マスとして数えて右を空白で埋める。"""
+    s = SHORT_LABEL.get(label, label)
+    return s + " " * max(0, width - cell_len(s))
 
 
 def kind_of(w: Window) -> str:
@@ -38,7 +51,13 @@ def kind_of(w: Window) -> str:
     return {"請求サイクル": "month", "クレジット": "credit"}.get(w.label, "other")
 
 
-SHAPES = {"5h": "●", "week": "◆", "month": "■", "credit": "▲"}
+def is_passed(w: Window, now: datetime) -> bool:
+    return w.resets_at is not None and w.resets_at <= now
+
+
+def effective_pct(w: Window, now: datetime) -> float | None:
+    """リセット時刻を過ぎた枠は 0% として扱う（使っていない間に保存した値でも、リセット後は空いている）。"""
+    return 0.0 if is_passed(w, now) else w.used_percent
 
 
 def _future(w: Window, now: datetime) -> bool:
@@ -55,28 +74,12 @@ def _windows(st: AccountState) -> list[Window]:
     return st.snapshot.windows if st.snapshot else []
 
 
-def _status_dot(st: AccountState) -> Text:
-    if st.snapshot is None:
-        return Text("✕", style=C.err)
-    if st.error or st.stale:
-        return Text("◐", style=C.warn)
-    return Text("●", style=C.faint)
-
-
 class MiniAxis:
     """右端の短い時間軸。位置 0 が「今」で、1 マスは 1 日 / cells_per_day。"""
 
-    def __init__(
-        self,
-        now: datetime,
-        width: int,
-        cells_per_day: int,
-        base: str = "─",
-        tick: str = "┼",
-    ) -> None:
+    def __init__(self, now: datetime, width: int, cells_per_day: int) -> None:
         self.now, self.width, self.cpd = now, width, cells_per_day
         self.cell = timedelta(days=1) / cells_per_day
-        self.base, self.tick = base, tick
 
     @property
     def span(self) -> timedelta:
@@ -115,12 +118,12 @@ class MiniAxis:
             cells[p : p + len(lab)] = list(lab)
         return Text("".join(cells), style=C.muted)
 
-    def line(self, marks: list[tuple[int, Text]], now_mark: str = "│") -> Text:
+    def line(self, marks: list[tuple[int, Text]]) -> Text:
         """marks は（位置, 印）の一覧。印は枠の名前を含んで 2 マス以上になることがある。"""
-        cells: list[Text] = [Text(self.base, style=C.faint) for _ in range(self.width)]
+        cells: list[Text] = [Text("─", style=C.faint) for _ in range(self.width)]
         for p, _ in self.tick_positions():
-            cells[p] = Text(self.tick, style=C.faint)
-        cells[0] = Text(now_mark, style=C.muted)
+            cells[p] = Text("┼", style=C.faint)
+        cells[0] = Text("│", style=C.muted)
         for p, mark in marks:
             i = p
             for j in range(len(mark.plain)):
@@ -135,65 +138,63 @@ class MiniAxis:
         return Text("").join(cells)
 
 
-# ---- 色と形の決め方 ----
+def axis_marks(st: AccountState, ax: MiniAxis, now: datetime) -> list[tuple[int, Text]]:
+    """各枠のリセット位置に「◆ + 枠の名前」を置く。色は枠の種類で決める。
 
-ColorFn = Callable[[Window, datetime], str]
-
-
-def usage_color(w: Window, now: datetime) -> str:
-    return pct_style(effective_pct(w, now))
-
-
-def kind_color(w: Window, now: datetime) -> str:
-    return C.kind(kind_of(w))
-
-
-def diamond(w: Window) -> str:
-    return "◆"
-
-
-def shape(w: Window) -> str:
-    return SHAPES.get(kind_of(w), "◆")
-
-
-def labeled_marks(
-    st: AccountState,
-    ax: MiniAxis,
-    now: datetime,
-    mark_color: ColorFn,
-    label_color: ColorFn,
-    glyph: Callable[[Window], str] = diamond,
-) -> list[tuple[int, Text]]:
-    """印の右に枠の名前を書く。次の印と重なるときは名前を省いて印だけにする。"""
-    raw = []
+    次の印と重なるときは名前を省いて印だけにする。
+    範囲より先の枠は、右端に名前を並べてから ▸ を 1 つ置く（「週 積▸」）。
+    """
+    inside, beyond = [], []
     for w in _windows(st):
         if not _future(w, now):
             continue
         p = ax.x(_at(w))
-        raw.append((min(p, ax.width - 1), p >= ax.width, w))
-    raw.sort(key=lambda r: r[0])
+        (beyond if p >= ax.width else inside).append((p, w))
+    inside.sort(key=lambda r: r[0])
+    beyond.sort(key=lambda r: _at(r[1]))
+
+    tail = Text()
+    if beyond:
+        for i, (_, w) in enumerate(beyond):
+            if i:
+                tail.append(" ")
+            tail.append(short(w.label), style=C.kind(kind_of(w)))
+        tail.append("▸", style=C.kind(kind_of(beyond[-1][1])))
+    # 右端の名前が入りきらないときは ▸ だけにする
+    tail_start = ax.width - tail.cell_len
+    if beyond and tail_start <= (inside[-1][0] + 1 if inside else 1):
+        tail = Text("▸", style=C.kind(kind_of(beyond[-1][1])))
+        tail_start = ax.width - 1
+
     out: list[tuple[int, Text]] = []
-    for i, (p, beyond, w) in enumerate(raw):
-        tag = Text(short(w.label), style=label_color(w, now))
-        if beyond:
-            # 範囲より先の印は右端にあるので、名前は左に置く
-            start = p - tag.cell_len
-            prev_end = out[-1][0] + out[-1][1].cell_len if out else 1
-            if start > prev_end:
-                out.append((start, tag))
-            out.append((p, Text("▸", style=mark_color(w, now))))
-            continue
-        nxt = raw[i + 1][0] if i + 1 < len(raw) else ax.width
-        mark = Text(glyph(w), style=mark_color(w, now))
+    for i, (p, w) in enumerate(inside):
+        color = C.kind(kind_of(w))
+        tag = Text(short(w.label), style=color)
+        nxt = (
+            inside[i + 1][0]
+            if i + 1 < len(inside)
+            else (tail_start if beyond else ax.width)
+        )
+        mark = Text("◆", style=color)
         out.append((p, mark + tag if p + 1 + tag.cell_len < nxt else mark))
+    if beyond:
+        out.append((tail_start, tail))
     return out
 
 
 # ---- 左の列 ----
 
 
+def _status_dot(st: AccountState) -> Text:
+    if st.snapshot is None:
+        return Text("✕", style=C.err)
+    if st.error or st.stale:
+        return Text("◐", style=C.warn)
+    return Text("●", style=C.faint)
+
+
 def _pct(p: float | None) -> Text:
-    return Text(f"{p:3.0f}%" if p is not None else "  -", style=pct_style(p))
+    return Text(f"{p:3.0f}%" if p is not None else "  -", style=pct_color(p))
 
 
 def _remain(w: Window, now: datetime) -> Text:
@@ -204,32 +205,30 @@ def _remain(w: Window, now: datetime) -> Text:
     return Text(fmt_duration((w.resets_at - now).total_seconds()), style=C.muted)
 
 
-def _line_gauge(p: float | None, width: int) -> Text:
+def line_gauge(p: float | None, width: int) -> Text:
     """細い線のゲージ。埋まった部分は ━、空きは ─。半マスは ╸ で描く。"""
     if p is None:
         return Text("─" * width, style=C.faint)
     halves = round(max(0.0, min(100.0, p)) / 100 * width * 2)
     full, half = divmod(halves, 2)
-    t = Text("━" * full, style=pct_style(p))
+    t = Text("━" * full, style=pct_color(p))
     if half:
-        t.append("╸", style=pct_style(p))
+        t.append("╸", style=pct_color(p))
     t.append("─" * (width - full - half), style=C.track)
     return t
 
 
-def segment(w: Window, now: datetime, label_color: ColorFn | None = None) -> Text:
+def segment(w: Window, now: datetime) -> Text:
+    """左の列の 1 枠ぶん。「週 ━━━━━━━━──  82% 1d04h」。"""
     p = effective_pct(w, now)
     return Text.assemble(
-        (short(w.label, 3), label_color(w, now) if label_color else C.muted),
-        _line_gauge(p, 10),
+        (short(w.label, 3), C.muted),
+        line_gauge(p, 10),
         " ",
         _pct(p),
         " ",
         _remain(w, now),
     )
-
-
-SEG_W = 27
 
 
 def _name(st: AccountState, name_w: int) -> Text:
@@ -238,38 +237,25 @@ def _name(st: AccountState, name_w: int) -> Text:
     )
 
 
-def _footer(ax: MiniAxis, legend: Text | None) -> Text:
-    hours = ax.cell.total_seconds() / 3600
+def _footer(ax: MiniAxis) -> Text:
     t = Text()
-    if legend:
-        t.append_text(legend)
-        t.append("    ")
-    t.append("1 マス ", style=C.faint)
-    t.append(f"{hours:g}h", style=C.accent)
+    for kind, label in [
+        ("5h", "5h"),
+        ("week", "週"),
+        ("month", "月"),
+        ("credit", "積"),
+    ]:
+        t.append(f"◆{label}", style=C.kind(kind))
+        t.append("  ")
+    t.append("  1 マス ", style=C.faint)
+    t.append(f"{ax.cell.total_seconds() / 3600:g}h", style=C.accent)
     t.append(f"  表示 {ax.span.total_seconds() / 86400:.1f} 日", style=C.faint)
     t.append("  ←→ 拡大縮小", style=C.faint)
     return t
 
 
-def kind_legend(shapes: bool = False) -> Text:
-    t = Text()
-    for kind, label in [("5h", "5h"), ("week", "週"), ("month", "月"), ("credit", "積")]:
-        t.append(f"{SHAPES[kind] if shapes else '◆'}{label}", style=C.kind(kind))
-        t.append("  ")
-    return t
-
-
-def render_axis_view(
-    states: list[AccountState],
-    now: datetime,
-    width: int,
-    zoom: int,
-    *,
-    mark_color: ColorFn,
-    label_color: ColorFn,
-    left_label_color: ColorFn | None = None,
-    glyph: Callable[[Window], str] = diamond,
-    legend: Text | None = None,
+def render(
+    states: list[AccountState], now: datetime, width: int, zoom: int = DEFAULT_ZOOM
 ) -> RenderableType:
     name_w = max([len(s.name) for s in states] + [6])
     head_w = 3 + name_w + 2
@@ -281,7 +267,7 @@ def render_axis_view(
     if show_axis:
         out.append(Text(" " * (left_w + 2)) + ax.header())
     for st in states:
-        segs = [segment(w, now, left_label_color) for w in _windows(st)]
+        segs = [segment(w, now) for w in _windows(st)]
         if st.kind == "cursor" and st.snapshot and st.snapshot.note:
             segs.append(Text(st.snapshot.note.replace("プラン枠 ", ""), style=C.faint))
         chunks = [segs[i : i + 2] for i in range(0, len(segs), 2)] or [[]]
@@ -294,84 +280,9 @@ def render_axis_view(
             t.pad_right(left_w - t.cell_len)
             if show_axis and i == 0:
                 t.append("  ")
-                t.append_text(
-                    ax.line(labeled_marks(st, ax, now, mark_color, label_color, glyph))
-                )
+                t.append_text(ax.line(axis_marks(st, ax, now)))
             out.append(t)
         if st.error:
             out.append(Text(" " * head_w + st.error, style=C.err))
-    out += [Text(""), _footer(ax, legend)]
+    out += [Text(""), _footer(ax)]
     return Group(*out)
-
-
-# ---- 色分けの案 ----
-
-
-def render_kind(states, now, width, span_index=DEFAULT_ZOOM, **_):
-    """1. 印もラベルも種類の色。"""
-    return render_axis_view(
-        states,
-        now,
-        width,
-        span_index,
-        mark_color=kind_color,
-        label_color=kind_color,
-        legend=kind_legend(),
-    )
-
-
-def render_kind_split(states, now, width, span_index=DEFAULT_ZOOM, **_):
-    """2. 印は使用率の色、ラベルは種類の色。"""
-    return render_axis_view(
-        states,
-        now,
-        width,
-        span_index,
-        mark_color=usage_color,
-        label_color=kind_color,
-        legend=kind_legend(),
-    )
-
-
-def render_kind_left(states, now, width, span_index=DEFAULT_ZOOM, **_):
-    """3. 1 に加えて、左の列の枠名も種類の色にする。左の列が凡例を兼ねる。"""
-    return render_axis_view(
-        states,
-        now,
-        width,
-        span_index,
-        mark_color=kind_color,
-        label_color=kind_color,
-        left_label_color=kind_color,
-    )
-
-
-def render_kind_shape(states, now, width, span_index=DEFAULT_ZOOM, **_):
-    """4. 3 に加えて、印の形も種類ごとに変える。"""
-    return render_axis_view(
-        states,
-        now,
-        width,
-        span_index,
-        mark_color=kind_color,
-        label_color=kind_color,
-        left_label_color=kind_color,
-        glyph=shape,
-        legend=kind_legend(shapes=True),
-    )
-
-
-def render_usage(states, now, width, span_index=DEFAULT_ZOOM, **_):
-    """比較用。印もラベルも使用率の色（2026-10-07 の「軸にラベル」と同じ）。"""
-    return render_axis_view(
-        states, now, width, span_index, mark_color=usage_color, label_color=usage_color
-    )
-
-
-VARIANTS = {
-    "kind": ("1. 種類の色", render_kind),
-    "kind-split": ("2. 印は使用率、ラベルは種類", render_kind_split),
-    "kind-left": ("3. 左の列も種類の色", render_kind_left),
-    "kind-shape": ("4. 種類で形も変える", render_kind_shape),
-    "usage": ("5. 使用率の色（比較用）", render_usage),
-}
