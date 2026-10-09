@@ -4,7 +4,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Static
 
 from .collect import cached_states, refresh
 from .config import Account
@@ -18,9 +18,8 @@ REFRESH_SECONDS = 300
 class RatewatchApp(App):
     TITLE = "ratewatch"
     CSS = """
-    Screen, #body, #view, #status { background: ansi_default; }
+    Screen, #body, #view { background: ansi_default; }
     #body { height: 1fr; padding: 0 1; }
-    #status { height: 1; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
         Binding("left", "zoom(-1)", "縮小"),
@@ -34,16 +33,15 @@ class RatewatchApp(App):
         self.accounts = accounts
         self.states: list[AccountState] = cached_states(accounts)
         self.fetching = False
+        self.status = ""
         self.zoom = DEFAULT_ZOOM
         self.register_theme(ICEBERG)
         self.theme = ICEBERG.name
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        # ヘッダもフッタも置かない。キー操作の案内と取得時刻は凡例の行に入れる
         with VerticalScroll(id="body"):
             yield Static(id="view")
-        yield Static("", id="status")
-        yield Footer()
 
     def on_mount(self) -> None:
         self.redraw()
@@ -60,7 +58,7 @@ class RatewatchApp(App):
         # スクロールバーと左右の余白のぶんを引いた幅で描く
         width = max(40, body.size.width - 3)
         self.query_one("#view", Static).update(
-            render(self.states, now_utc(), width, self.zoom)
+            render(self.states, now_utc(), width, self.zoom, self.status)
         )
 
     def action_zoom(self, delta: int) -> None:
@@ -71,7 +69,8 @@ class RatewatchApp(App):
         if self.fetching:
             return
         self.fetching = True
-        self.query_one("#status", Static).update("取得中…")
+        self.status = "取得中…"
+        self.redraw()
         self._fetch()
 
     @work(thread=True, exclusive=True)
@@ -84,8 +83,8 @@ class RatewatchApp(App):
         self.fetching = False
         failed = sum(1 for s in states if s.error)
         at = now_utc().astimezone().strftime("%H:%M:%S")
-        msg = f"{at} に取得（{REFRESH_SECONDS // 60} 分ごとに自動取得）"
+        msg = f"{at} 取得（{REFRESH_SECONDS // 60} 分ごと）"
         if failed:
-            msg += f"  失敗 {failed} 件（保存しておいた値を表示中）"
-        self.query_one("#status", Static).update(msg)
+            msg += f"  失敗 {failed} 件は保存値"
+        self.status = msg
         self.redraw()

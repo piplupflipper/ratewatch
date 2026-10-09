@@ -3,6 +3,10 @@
 1 アカウントを 1 行にして、左に使用率と残り時間、右端に短い時間軸を置く。
 時間軸には、各枠のリセット時刻に印と枠の名前（5h、週、月、積）を置き、枠の種類で色を分ける。
 
+縦幅は「軸の日付 1 行 + アカウント数 + 凡例 1 行」に抑える。
+tmux で btop などと上下に並べて常時表示する使い方を想定し、ヘッダ、空行、
+ステータス行、フッタは置かず、キー操作の案内と取得時刻も凡例の行に入れる。
+
 時間軸は 1 マスあたりの時間を固定する（既定は 2 時間）。
 表示する範囲を軸の幅に引き伸ばすと、1 日あたりのマス数が半端になり、目盛りの位置を整数に丸めたときに間隔がそろわないため。
 軸の幅からは表示する日数のほうを決めるので、端末を広げると表示する日付の範囲が広がる。
@@ -237,8 +241,9 @@ def _name(st: AccountState, name_w: int) -> Text:
     )
 
 
-def _footer(ax: MiniAxis) -> Text:
-    t = Text()
+def _footer(ax: MiniAxis, width: int, status: str = "") -> Text:
+    """凡例、ズームの状態、キー操作の案内、取得時刻を 1 行にまとめる。幅を超える分は右を落とす。"""
+    t = Text(no_wrap=True, overflow="ellipsis")
     for kind, label in [
         ("5h", "5h"),
         ("week", "週"),
@@ -250,12 +255,19 @@ def _footer(ax: MiniAxis) -> Text:
     t.append("  1 マス ", style=C.faint)
     t.append(f"{ax.cell.total_seconds() / 3600:g}h", style=C.accent)
     t.append(f"  表示 {ax.span.total_seconds() / 86400:.1f} 日", style=C.faint)
-    t.append("  ←→ 拡大縮小", style=C.faint)
+    t.append("  ←→ 拡大縮小  r 再取得  q 終了", style=C.faint)
+    if status:
+        t.append("  " + status, style=C.muted)
+    t.truncate(width, overflow="ellipsis")
     return t
 
 
 def render(
-    states: list[AccountState], now: datetime, width: int, zoom: int = DEFAULT_ZOOM
+    states: list[AccountState],
+    now: datetime,
+    width: int,
+    zoom: int = DEFAULT_ZOOM,
+    status: str = "",
 ) -> RenderableType:
     name_w = max([len(s.name) for s in states] + [6])
     head_w = 3 + name_w + 2
@@ -284,5 +296,5 @@ def render(
             out.append(t)
         if st.error:
             out.append(Text(" " * head_w + st.error, style=C.err))
-    out += [Text(""), _footer(ax)]
+    out.append(_footer(ax, width, status))
     return Group(*out)
