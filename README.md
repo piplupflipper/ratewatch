@@ -5,7 +5,7 @@ Claude / Codex / Cursor の複数アカウントについて、レートリミ�
 ## 入れ方
 
 ```sh
-uv tool install git+ssh://git@github.com/ngmtine/ratewatch.git
+uv tool install git+ssh://git@github.com/piplupflipper/ratewatch.git
 ratewatch          # TUI
 ratewatch --once   # 1 回取得して表を出力して終わる
 ```
