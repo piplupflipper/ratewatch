@@ -96,6 +96,14 @@ def fetch_codex(codex_home: Path) -> Snapshot:
     return parse_codex(_get(CODEX_USAGE_URL, headers))
 
 
+def _is_zero(v: object) -> bool:
+    """上限の値が 0 か。API は "0" のような文字列で返す。"""
+    try:
+        return v is not None and float(v) == 0  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+
+
 def parse_codex(body: dict) -> Snapshot:
     windows = []
     rl = body.get("rate_limit") or {}
@@ -108,7 +116,11 @@ def parse_codex(body: dict) -> Snapshot:
             )
     limit = (body.get("spend_control") or {}).get("individual_limit")
     if isinstance(limit, dict):
-        windows.append(Window("クレジット", limit.get("used_percent"), parse_ts(limit.get("reset_at"))))
+        if _is_zero(limit.get("limit")):
+            # 上限が 0 だと、消費が 0 でも used_percent は 100 で返る。使い切ったのではなく使えない状態なので、無効として出す
+            windows.append(Window("クレジット", None, None, disabled=True))
+        else:
+            windows.append(Window("クレジット", limit.get("used_percent"), parse_ts(limit.get("reset_at"))))
     note = None
     reached = body.get("rate_limit_reached_type")
     if isinstance(reached, dict) and reached.get("type"):
