@@ -110,7 +110,7 @@ def build_rows(states: list[AccountState], now: datetime) -> list[Row]:
                         st.name if first else "",
                         (st.kind + (f" ({snap.plan})" if snap.plan else "")) if first else "",
                         w.label,
-                        usage_cell(w.used_percent, passed),
+                        Text("無効", style="dim") if w.disabled else usage_cell(w.used_percent, passed),
                         reset,
                         remain,
                         ago if first else "",

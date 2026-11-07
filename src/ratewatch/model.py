@@ -6,23 +6,34 @@ from datetime import datetime, timezone
 
 @dataclass
 class Window:
-    """1 つのレートリミット枠（5 時間枠、週の枠、請求サイクルなど）。"""
+    """1 つのレートリミット枠（5 時間枠、週の枠、請求サイクルなど）。
+
+    disabled は、上限が 0 で枠として使えない状態を表す（Codex のクレジット上限が 0 のときなど）。
+    このとき used_percent と resets_at は意味を持たないので None にする。
+    """
 
     label: str
     used_percent: float | None
     resets_at: datetime | None
+    disabled: bool = False
 
     def to_dict(self) -> dict:
         return {
             "label": self.label,
             "used_percent": self.used_percent,
             "resets_at": self.resets_at.isoformat() if self.resets_at else None,
+            "disabled": self.disabled,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> Window:
         r = d.get("resets_at")
-        return cls(d["label"], d.get("used_percent"), datetime.fromisoformat(r) if r else None)
+        return cls(
+            d["label"],
+            d.get("used_percent"),
+            datetime.fromisoformat(r) if r else None,
+            disabled=bool(d.get("disabled", False)),
+        )
 
 
 @dataclass

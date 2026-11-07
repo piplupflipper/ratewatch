@@ -44,6 +44,38 @@ def test_parse_codex_five_hour_and_weekly():
     assert [w.label for w in parse_codex(body).windows] == ["5h", "週"]
 
 
+def test_parse_codex_zero_credit_limit_is_disabled_not_full():
+    # 上限が 0 だと、消費 0 でも used_percent は 100 で返る（2026-11-07 の Team プランの応答）
+    body = {
+        "rate_limit": {
+            "primary_window": {"used_percent": 36, "limit_window_seconds": 604800, "reset_at": 1794556956},
+            "secondary_window": None,
+        },
+        "spend_control": {
+            "reached": True,
+            "individual_limit": {"limit": "0", "used": "0.0", "used_percent": 100, "reset_at": 1796083200},
+        },
+    }
+    credit = parse_codex(body).windows[1]
+    assert credit.label == "クレジット"
+    assert credit.disabled
+    assert credit.used_percent is None and credit.resets_at is None
+
+
+def test_parse_codex_nonzero_credit_limit_keeps_percent():
+    body = {"spend_control": {"individual_limit": {"limit": "50", "used_percent": 20, "reset_at": 1796083200}}}
+    credit = parse_codex(body).windows[0]
+    assert not credit.disabled
+    assert credit.used_percent == 20
+
+
+def test_disabled_window_survives_cache_round_trip():
+    w = Window("クレジット", None, None, disabled=True)
+    assert Window.from_dict(w.to_dict()) == w
+    # disabled を持たない古いキャッシュも読める
+    assert Window.from_dict({"label": "週", "used_percent": 3.0, "resets_at": None}).disabled is False
+
+
 def test_parse_cursor_billing_cycle():
     body = {
         "billingCycleEnd": "2026-10-09T16:07:23.000Z",

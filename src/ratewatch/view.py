@@ -223,7 +223,9 @@ def line_gauge(p: float | None, width: int) -> Text:
 
 
 def segment(w: Window, now: datetime) -> Text:
-    """左の列の 1 枠ぶん。「週 ━━━━━━━━──  82% 1d04h」。"""
+    """左の列の 1 枠ぶん。「週 ━━━━━━━━──  82% 1d04h」。無効な枠は「積 クレジット無効」。"""
+    if w.disabled:
+        return Text.assemble((short(w.label, 3), C.muted), (f"{w.label}無効", C.faint))
     p = effective_pct(w, now)
     return Text.assemble(
         (short(w.label, 3), C.muted),

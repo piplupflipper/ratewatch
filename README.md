@@ -69,7 +69,7 @@ auth = "~/.config/cursor/auth.json"   # cursor-agent login の認証ファイル
 | kind | 認証ファイル | 取得先 | 出す枠 |
 |---|---|---|---|
 | claude | `<dir>/.credentials.json` | `api.anthropic.com/api/oauth/usage` | 5 時間枠、週の枠 |
-| codex | `<dir>/auth.json` | `chatgpt.com/backend-api/wham/usage` | 5 時間枠と週の枠（プランによる）、ワークスペースのクレジット上限 |
+| codex | `<dir>/auth.json` | `chatgpt.com/backend-api/wham/usage` | 5 時間枠と週の枠（プランによる）、ワークスペースのクレジット上限（上限が 0 なら「クレジット無効」と出す） |
 | cursor | `~/.config/cursor/auth.json` | `cursor.com/api/usage-summary` | 月の請求サイクル |
 
 - トークンは読むだけで更新しない。更新すると CLI 側の refresh token を無効にするおそれがあるため。

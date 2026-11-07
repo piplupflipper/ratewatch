@@ -109,3 +109,12 @@ def test_passed_reset_counts_as_empty():
     st = [AccountState("a", "claude", Snapshot(NOW - timedelta(days=1), [Window("5h", 95.0, NOW - timedelta(hours=1))]))]
     out = text_of(render(st, NOW, 140), 140)
     assert "  0%" in out and "済" in out
+
+
+def test_disabled_credit_is_annotated_without_gauge_or_mark():
+    st = AccountState("codex", "codex", Snapshot(NOW, [Window("週", 36.0, h(130)), Window("クレジット", None, None, disabled=True)]))
+    out = text_of(render([st], NOW, 140), 140)
+    assert "クレジット無効" in out
+    assert "100%" not in out
+    ax = MiniAxis(NOW, 40, ZOOMS[1])
+    assert all("積" not in m.plain for _, m in axis_marks(st, ax, NOW))
