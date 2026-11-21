@@ -11,6 +11,7 @@ import base64
 import json
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from .model import FetchError, Snapshot, Window, now_utc, parse_ts, window_label
@@ -21,6 +22,8 @@ TIMEOUT = 15
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 CURSOR_USAGE_URL = "https://cursor.com/api/usage-summary"
+# Grok Build CLI の /usage が叩く取得先（grok 1.0.92 の実行ファイルの文字列から見つけた）
+GROK_USAGE_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 
 
 def _read_json(path: Path) -> dict:
@@ -162,8 +165,64 @@ def parse_cursor(body: dict) -> Snapshot:
     return Snapshot(fetched_at=now_utc(), windows=windows, plan=body.get("membershipType"), note=note)
 
 
+# ---- Grok ----
+
+
+def _grok_login(auth: dict) -> dict:
+    """auth.json の値から、アクセストークンを持つログインを 1 つ選ぶ。
+
+    auth.json は「OIDC の発行元::クライアント ID」をキーにしたオブジェクトで、値がログインの情報。
+    複数あるときは有効期限が最も遅いものを使う。
+    """
+    logins = [v for v in auth.values() if isinstance(v, dict) and v.get("key")]
+    if not logins:
+        raise FetchError("auth.json にトークンがない（grok login が必要）")
+    return max(logins, key=lambda v: str(v.get("expires_at") or ""))
+
+
+def fetch_grok(grok_home: Path) -> Snapshot:
+    login = _grok_login(_read_json(grok_home / "auth.json"))
+    exp = parse_ts(login.get("expires_at"))
+    if exp and exp <= now_utc():
+        raise FetchError("トークン期限切れ（この設定ディレクトリで grok を起動すると更新される）")
+    body = _get(GROK_USAGE_URL, {"Authorization": f"Bearer {login['key']}"})
+    return parse_grok(body, plan="team" if login.get("principal_type") == "Team" else None)
+
+
+def _grok_period_label(kind: str | None, start: datetime | None, end: datetime | None) -> str:
+    """枠の名前。2026-11-22 の応答で確かめた種類は USAGE_PERIOD_TYPE_WEEKLY だけなので、ほかは枠の長さで決める。"""
+    if kind == "USAGE_PERIOD_TYPE_WEEKLY":
+        return "週"
+    if start is None or end is None:
+        return "?"
+    seconds = int((end - start).total_seconds())
+    if 28 * 86400 <= seconds <= 31 * 86400:
+        return "月"
+    return window_label(seconds)
+
+
+def parse_grok(body: dict, plan: str | None = None) -> Snapshot:
+    config = body.get("config") or {}
+    period = config.get("currentPeriod") or {}
+    start = parse_ts(period.get("start") or config.get("billingPeriodStart"))
+    end = parse_ts(period.get("end") or config.get("billingPeriodEnd"))
+    label = _grok_period_label(period.get("type"), start, end)
+    windows = []
+    if config.get("creditUsagePercent") is not None or end is not None:
+        windows.append(Window(label, config.get("creditUsagePercent"), end))
+    # productUsage は製品ごとの消費の内訳（2026-11-22 の応答では合計が 100）。枠ではないので備考に出す
+    parts = [
+        f"{u['product']} {u['usagePercent']:g}%"
+        for u in config.get("productUsage") or []
+        if isinstance(u, dict) and u.get("product") and isinstance(u.get("usagePercent"), (int, float))
+    ]
+    note = "内訳 " + " / ".join(parts) if parts else None
+    return Snapshot(fetched_at=now_utc(), windows=windows, plan=plan, note=note)
+
+
 FETCHERS = {
     "claude": fetch_claude,
     "codex": fetch_codex,
     "cursor": fetch_cursor,
+    "grok": fetch_grok,
 }

@@ -52,7 +52,7 @@ def kind_of(w: Window) -> str:
         return "5h"
     if w.label.startswith("週"):
         return "week"
-    return {"請求サイクル": "month", "クレジット": "credit"}.get(w.label, "other")
+    return {"請求サイクル": "month", "月": "month", "クレジット": "credit"}.get(w.label, "other")
 
 
 def is_passed(w: Window, now: datetime) -> bool:
