@@ -21,6 +21,7 @@ _PATH_KEYS = {
     "claude": ("dir", "~/.claude"),
     "codex": ("dir", "~/.codex"),
     "cursor": ("auth", "~/.config/cursor/auth.json"),
+    "grok": ("dir", "~/.grok"),
 }
 
 
@@ -40,7 +41,7 @@ def load_accounts(path: Path = CONFIG_PATH) -> list[Account]:
     for i, a in enumerate(data.get("account", [])):
         kind = a.get("kind")
         if kind not in _PATH_KEYS:
-            raise ValueError(f"{path}: account[{i}] の kind が不正: {kind!r}（claude / codex / cursor）")
+            raise ValueError(f"{path}: account[{i}] の kind が不正: {kind!r}（claude / codex / cursor / grok）")
         key, default = _PATH_KEYS[kind]
         accounts.append(Account(a.get("name") or kind, kind, Path(a.get(key, default)).expanduser()))
     names = [a.name for a in accounts]

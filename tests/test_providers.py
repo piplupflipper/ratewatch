@@ -1,8 +1,13 @@
+import json
 from datetime import datetime, timezone
 
+import pytest
+
+from ratewatch import providers
 from ratewatch.collect import build_rows
-from ratewatch.model import AccountState, Snapshot, Window, parse_ts, window_label
-from ratewatch.providers import parse_claude, parse_codex, parse_cursor
+from ratewatch.model import AccountState, FetchError, Snapshot, Window, parse_ts, window_label
+from ratewatch.providers import fetch_grok, parse_claude, parse_codex, parse_cursor, parse_grok
+from ratewatch.view import kind_of
 
 
 def test_parse_claude_reads_five_hour_and_weekly():
@@ -114,3 +119,80 @@ def test_passed_reset_is_shown_as_done_in_stale_snapshot():
     assert cells[5] == "済"
     assert cells[6] == "12h00m前"
     assert "要再ログイン" in cells[7]
+
+
+# 2026-11-22 の応答（Team のアカウント）
+GROK_BODY = {
+    "config": {
+        "currentPeriod": {
+            "type": "USAGE_PERIOD_TYPE_WEEKLY",
+            "start": "2026-11-16T06:51:18.410+00:00",
+            "end": "2026-11-23T06:51:18.410+00:00",
+        },
+        "creditUsagePercent": 100.0,
+        "productUsage": [{"product": "GrokBuild", "usagePercent": 99.0}, {"product": "GrokBot", "usagePercent": 1.0}],
+        "isUnifiedBillingUser": True,
+        "prepaidBalance": {"val": 0},
+        "billingPeriodStart": "2026-11-16T06:51:18.410+00:00",
+        "billingPeriodEnd": "2026-11-23T06:51:18.410+00:00",
+    }
+}
+
+
+def test_parse_grok_weekly_credit_period():
+    snap = parse_grok(GROK_BODY, plan="team")
+    (w,) = snap.windows
+    assert (w.label, w.used_percent) == ("週", 100.0)
+    assert w.resets_at == datetime(2026, 11, 23, 6, 51, 18, 410000, timezone.utc)
+    assert snap.note == "内訳 GrokBuild 99% / GrokBot 1%"
+    assert snap.plan == "team"
+
+
+def test_parse_grok_unknown_period_type_is_named_by_length():
+    body = {
+        "config": {
+            "currentPeriod": {"type": "X", "start": "2026-11-01T00:00:00+00:00", "end": "2026-12-01T00:00:00+00:00"},
+            "creditUsagePercent": 12.5,
+        }
+    }
+    (w,) = parse_grok(body).windows
+    assert w.label == "月"
+    assert kind_of(w) == "month"
+
+
+def test_parse_grok_empty_config_has_no_windows():
+    assert parse_grok({"config": {}}).windows == []
+
+
+def _write_grok_auth(tmp_path, **login):
+    (tmp_path / "auth.json").write_text(json.dumps({"https://auth.x.ai::client": login}))
+
+
+def test_fetch_grok_skips_request_when_token_expired(tmp_path, monkeypatch):
+    _write_grok_auth(tmp_path, key="a.b.c", expires_at="2026-11-22T02:16:42.046162602Z")
+    monkeypatch.setattr(providers, "now_utc", lambda: datetime(2026, 11, 22, 3, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(providers, "_get", lambda *a: pytest.fail("期限切れのトークンで叩いた"))
+    with pytest.raises(FetchError, match="期限切れ"):
+        fetch_grok(tmp_path)
+
+
+def test_fetch_grok_sends_bearer_token(tmp_path, monkeypatch):
+    _write_grok_auth(tmp_path, key="a.b.c", expires_at="2026-11-22T02:16:42Z", principal_type="Team")
+    monkeypatch.setattr(providers, "now_utc", lambda: datetime(2026, 11, 22, 0, 0, tzinfo=timezone.utc))
+    seen = {}
+
+    def fake_get(url, headers):
+        seen.update(url=url, headers=headers)
+        return GROK_BODY
+
+    monkeypatch.setattr(providers, "_get", fake_get)
+    snap = fetch_grok(tmp_path)
+    assert seen["url"] == providers.GROK_USAGE_URL
+    assert seen["headers"]["Authorization"] == "Bearer a.b.c"
+    assert snap.plan == "team"
+
+
+def test_fetch_grok_without_login(tmp_path):
+    (tmp_path / "auth.json").write_text("{}")
+    with pytest.raises(FetchError, match="grok login"):
+        fetch_grok(tmp_path)
